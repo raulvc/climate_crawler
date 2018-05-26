@@ -3,6 +3,7 @@ URLS = {
     'br_cities': 'https://www.climatempo.com.br/brasil'
 }
 XPATHS = {
+    'subscription-modal': '//div[@id="modal-subscribe" and @role="dialog"]',
     'close-subscription-modal': '//a[@id="closeButton" and @class="modal-color-climatempo"]',
     'geolocation_button': '//h1[@id="momento-localidade"]',
     'geolocation_modal': '//div[@id="geolocation" and @class="modal modal-geo open"]',

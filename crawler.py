@@ -1,4 +1,6 @@
 import shutil  # NOTE: python >= 3.3
+from time import sleep
+
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -38,17 +40,30 @@ class Crawler:
     def __close_subscription_overlay(self):
 
         # waits until it's visible
-        self.wait.until(expected_conditions.visibility_of(self.driver.find_element_by_id('modal-subscribe')))
+        self.wait.until(expected_conditions.visibility_of_element_located((By.XPATH, XPATHS['subscription-modal'])))
 
         # close it
         close_xpath = XPATHS['close-subscription-modal']
-        # there's a div that sometimes get in the way of the close button immediately after loading
+        # there's a div that sometimes gets in the way of the close button immediately after loading
         # waiting until it's clickable
         close_overlay_link = self.wait.until(expected_conditions.element_to_be_clickable((By.XPATH, close_xpath)))
         close_overlay_link.click()
 
+        self.wait.until(expected_conditions.invisibility_of_element_located((By.XPATH, XPATHS['subscription-modal'])))
+
     def __parse_cities(self, state):
-        city_select = self.driver.find_element_by_xpath(XPATHS['city_select'])
+        while True:
+            city_select = self.driver.find_element_by_xpath(XPATHS['city_select'])
+
+            # turns out cities aren't immediately populated
+            # hold this loop until all options are available
+            options_count = len(city_select.find_elements_by_xpath(".//*"))
+
+            if options_count > 1:
+                break
+            else:
+                sleep(1)
+
         cities_html = city_select.get_attribute('innerHTML')
 
         # parses city options
@@ -92,8 +107,20 @@ class Crawler:
         # at this point both select elements (for states and cities) should be visible
         self.__parse_states()
 
+    def __load_data(self):
+        # iterates over states in alphabetical order
+        for state in sorted(self.states.keys()):
+            print(state)
+            cities = sorted(self.states[state]['cities'])
+            print(cities)
+            print('\n')
+
     def start(self):
+        # retrieves available states and cities and stores it in an instance var 'states'
         self.__fetch_available_cities()
+
+        # iterates over all cities, loading pages and retrieving data
+        self.__load_data()
 
 
 if __name__ == '__main__':
