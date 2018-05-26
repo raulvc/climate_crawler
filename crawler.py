@@ -1,3 +1,5 @@
+import csv
+import os
 import shutil  # NOTE: python >= 3.3
 from datetime import datetime
 from time import sleep
@@ -15,10 +17,13 @@ from consts import *
 
 class Crawler:
 
-    def __init__(self):
+    def __init__(self, output_file=None, limit=10):
+        self.output_file = output_file
+        self.limit = limit
         self.driver = self.__get_driver()
         self.driver.implicitly_wait(DEFAULT_TIMEOUT)
         self.wait = WebDriverWait(self.driver, DEFAULT_TIMEOUT)
+        self.cities_count = 0
 
     @staticmethod
     def __get_chromedriver_path():
@@ -79,7 +84,9 @@ class Crawler:
         # parses city options
         city_parser = BeautifulSoup(cities_html, 'html.parser')
 
-        for city_option in city_parser.contents:
+        cities = city_parser.contents
+        self.cities_count += len(cities)  # to keep a count of total cities
+        for city_option in cities:
             city_name = city_option.text
             city_id = city_option.attrs['value']  # climatempo id for this city
             self.states[state][city_name] = {}
@@ -132,6 +139,8 @@ class Crawler:
 
     def __load_city_climate(self, state, city):
         city_data = self.states[state][city]
+        city_data['state'] = state  # seems redundant but avoids adding this field later in csv writer
+
         self.driver.get(URLS['climate_fetch'] + city_data['city_id'])  # specific page for this city
 
         # finds container for current weather
@@ -142,8 +151,8 @@ class Crawler:
         weather_parser = BeautifulSoup(main_container_html, 'html.parser')
 
         # temperatures
-        city_data['max_temp'] = weather_parser.find(id='tempMax0').text
         city_data['min_temp'] = weather_parser.find(id='tempMin0').text
+        city_data['max_temp'] = weather_parser.find(id='tempMax0').text
 
         # precipitation
         raw_precipitation = weather_parser.findAll('p', {'arial-label': 'ícone do tempo Manhã'})[0].text
@@ -160,17 +169,61 @@ class Crawler:
 
     def __load_data(self):
         # iterates over states and cities in alphabetical order
+        count = 1
         for state in sorted(self.states.keys()):
             cities = sorted(self.states[state].keys())
             for city in cities:
+                print('(%s/%s) Scraping %s - %s...' % (count, self.cities_count, state, city))
                 self.__load_city_climate(state, city)
+                count += 1
+                if count > self.limit:
+                    print('[WARN] Reached defined limit of %s cities' % self.limit)
+                    return
+
+    def __dump_data(self, output_file=None):
+        if not output_file:
+            output_file = os.path.join(os.getcwd(), 'climate_export.csv')
+        if os.path.exists(output_file):
+            print('[WARN] "%s" exists already. Will be overwritten.' % output_file)
+
+        with open(output_file, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(COLUMNS)
+
+            # iterates over states and cities in alphabetical order
+            count = 1
+            for state in sorted(self.states.keys()):
+                cities = sorted(self.states[state].keys())
+                for city in cities:
+                    city_data = self.states[state][city]
+                    writer.writerow(city_data.values())
+                    count += 1
+                    if count > self.limit:
+                        return
 
     def start(self):
+        start_time = datetime.now()
+
         # retrieves available states and cities and stores it in an instance var 'states'
+        print('Retrieving available cities...')
         self.__fetch_available_cities()
+        fetch_cities_time = datetime.now()
+        print('Found %s cities' % self.cities_count)
+        print('Done. (%s)' % (fetch_cities_time - start_time))
 
         # iterates over all cities, loading pages and retrieving data
+        print('Retrieving weather data...')
         self.__load_data()
+        load_data_time = datetime.now()
+        print('Done. (%s)' % (load_data_time - fetch_cities_time))
+
+        # dumps in memory data to disk
+        print('Writing data to disk in csv format...')
+        self.__dump_data()
+        end_time = datetime.now()
+        print('Done. (%s)' % (end_time - load_data_time))
+
+        print('Total time: %s' % (end_time - start_time))
 
 
 if __name__ == '__main__':

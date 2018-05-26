@@ -12,3 +12,4 @@ XPATHS = {
     'city_select': '//select[@id="sel-city-geo" and @class="slt-geo"]',
     'main_container': '//div[@id="mega-destaque" and @data-id="mainContainer"]'
 }
+COLUMNS = ['city_id', 'state', 'min_temp', 'max_temp', 'precipitation', 'month']
