@@ -1,8 +1,10 @@
 import shutil  # NOTE: python >= 3.3
+from datetime import datetime
 from time import sleep
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support.select import Select
@@ -49,7 +51,14 @@ class Crawler:
         close_overlay_link = self.wait.until(expected_conditions.element_to_be_clickable((By.XPATH, close_xpath)))
         close_overlay_link.click()
 
-        self.wait.until(expected_conditions.invisibility_of_element_located((By.XPATH, XPATHS['subscription-modal'])))
+        while True:
+            try:
+                self.wait.until(expected_conditions.invisibility_of_element_located((By.XPATH, XPATHS['subscription-modal'])))
+                break
+            except TimeoutException as timeout:
+                # something went wrong while waiting for modal to go away
+                # retries closing link
+                close_overlay_link.click()
 
     def __parse_cities(self, state):
         while True:
@@ -62,7 +71,8 @@ class Crawler:
             if options_count > 1:
                 break
             else:
-                sleep(1)
+                # NOTE: can't use driver's wait here as it needs a known element to expect
+                sleep(0.3)
 
         cities_html = city_select.get_attribute('innerHTML')
 
@@ -70,7 +80,10 @@ class Crawler:
         city_parser = BeautifulSoup(cities_html, 'html.parser')
 
         for city_option in city_parser.contents:
-            self.states[state]['cities'].append(city_option.text)
+            city_name = city_option.text
+            city_id = city_option.attrs['value']  # climatempo id for this city
+            self.states[state][city_name] = {}
+            self.states[state][city_name]['city_id'] = city_id
 
     def __parse_states(self):
         self.states = {}
@@ -84,7 +97,7 @@ class Crawler:
 
         for state_option in state_parser.contents:
             state = state_option.text
-            self.states[state] = {'cities': []}
+            self.states[state] = {}
 
             # selects a state to show it's cities
             state_select_component.select_by_visible_text(state)
@@ -92,7 +105,7 @@ class Crawler:
             self.__parse_cities(state)
 
     def __fetch_available_cities(self):
-        self.driver.get(URLS['br_cities'])  # retrieves page where cities are listed
+        self.driver.get(URLS['cities_fetch'])  # retrieves page where cities are listed
 
         # NOTE: there's a pesky subscription overlay that takes over (grabbing focus)
         self.__close_subscription_overlay()
@@ -107,13 +120,50 @@ class Crawler:
         # at this point both select elements (for states and cities) should be visible
         self.__parse_states()
 
+    @staticmethod
+    def __parse_precipitation(raw_precipitation):
+        return raw_precipitation.split('\n')[0] + ' mm'
+
+    @staticmethod
+    def __parse_month(raw_date):
+        date_segment = raw_date[-5:]  # extracts the 'dd/mm' part of the string
+        date_obj = datetime.strptime(date_segment, '%d/%m')  # converts to a date object
+        return datetime.strftime(date_obj, '%b')  # returns month's full name from current locale
+
+    def __load_city_climate(self, state, city):
+        city_data = self.states[state][city]
+        self.driver.get(URLS['climate_fetch'] + city_data['city_id'])  # specific page for this city
+
+        # finds container for current weather
+        main_container = self.driver.find_element_by_xpath(XPATHS['main_container'])
+        main_container_html = main_container.get_attribute('innerHTML')
+
+        # parses weather data
+        weather_parser = BeautifulSoup(main_container_html, 'html.parser')
+
+        # temperatures
+        city_data['max_temp'] = weather_parser.find(id='tempMax0').text
+        city_data['min_temp'] = weather_parser.find(id='tempMin0').text
+
+        # precipitation
+        raw_precipitation = weather_parser.findAll('p', {'arial-label': 'ícone do tempo Manhã'})[0].text
+        city_data['precipitation'] = self.__parse_precipitation(raw_precipitation)
+
+        # date
+        # NOTE: honestly we could just grab current date from system, but in the odd scenario where
+        # climatempo is on a weird offset this works fine
+        raw_date = weather_parser.find(lambda tag: tag.name == 'h1' and 'PREVISÃO DE HOJE' in tag.text).text
+        city_data['month'] = self.__parse_month(raw_date)
+
+        # committing weather data to city's dict
+        self.states[state][city] = city_data
+
     def __load_data(self):
-        # iterates over states in alphabetical order
+        # iterates over states and cities in alphabetical order
         for state in sorted(self.states.keys()):
-            print(state)
-            cities = sorted(self.states[state]['cities'])
-            print(cities)
-            print('\n')
+            cities = sorted(self.states[state].keys())
+            for city in cities:
+                self.__load_city_climate(state, city)
 
     def start(self):
         # retrieves available states and cities and stores it in an instance var 'states'
