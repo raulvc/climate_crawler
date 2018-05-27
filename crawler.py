@@ -1,6 +1,8 @@
+import argparse
 import csv
 import os
 from datetime import datetime
+from math import inf as infinity
 
 from multiprocessing import Pool, cpu_count
 
@@ -11,7 +13,7 @@ from lib.fetchers.climate_fetcher import ClimateFetcher
 
 class Crawler:
 
-    def __init__(self, output_file=None, limit=10):
+    def __init__(self, output_file, limit):
         self.output_file = output_file
         self.limit = limit
 
@@ -38,7 +40,7 @@ class Crawler:
     def __load_data(self):
         city_count = len(self.cities)
         # upper boundary
-        upper_limit = city_count if self.limit == -1 else min(city_count, self.limit)
+        upper_limit = min(city_count, self.limit)
 
         # parallelizes climate fetch
         climate_fetcher = ClimateFetcher(upper_limit)
@@ -49,20 +51,29 @@ class Crawler:
         pool.join()  # waits until every thread returns
         self.processed_cities = results  # pool keeps results sorted
 
-    def __dump_data(self, output_file=None):
-        if not output_file:
-            output_file = os.path.join(os.getcwd(), 'climate_export.csv')
-        if os.path.exists(output_file):
-            print('[WARN] "%s" exists already. Will be overwritten.' % output_file)
+    def __dump_data(self):
+        if os.path.exists(self.output_file):
+            print('[WARN] "%s" exists already. Will be overwritten.' % self.output_file)
 
-        with open(output_file, 'w') as f:
-            writer = csv.writer(f)
-            writer.writerow(COLUMNS)
-            for city_data in self.processed_cities:
-                writer.writerow(city_data.values())
+        try:
+            with open(self.output_file, 'w') as f:
+                writer = csv.writer(f)
+                writer.writerow(COLUMNS)
+                for city_data in self.processed_cities:
+                    writer.writerow(city_data.values())
+        except IOError as ex:
+            print("Couldn't write to %s:" % self.output_file)
+            print(ex.strerror)
+            exit(1)
 
     def start(self):
         start_time = datetime.now()
+        print('Started at %s' % start_time)
+        if self.limit == infinity:
+            print('Running in unlimited mode (fetches all available cities)')
+        else:
+            print('Climate fetch requests limit: %s' % self.limit)
+        print("Output data to '%s'" % self.output_file)
 
         # retrieves available states and cities and stores it in an instance var 'states'
         print('Retrieving available cities...')
@@ -86,6 +97,14 @@ class Crawler:
         print('Total time: %s' % (end_time - start_time))
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-l', '--limit', type=int, help='limit of climate fetch requests', default=infinity)
+    parser.add_argument('-o', '--output', type=str, help='output filepath', default=os.path.join(os.getcwd(), 'export.csv'))
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    crawler = Crawler()
+    args = parse_args()
+    crawler = Crawler(limit=args.limit, output_file=args.output)
     crawler.start()
